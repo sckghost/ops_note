@@ -1,0 +1,139 @@
+Linux Release: CentOS release 6.4 
+ES Version: 2.x
+OS
+
+OS 参数说明
+
+vm.swappiness
+ES 推荐将此参数设置为 1，大幅降低 swap 分区的大小，强制最大程度的使用内存(根据服务器硬件性能预留10%~20%左右最佳)。
+注意，这里不要设置为 0, 这会很可能会造成 OOM。
+
+	net.core.somaxconn
+定义了每个端口最大的监听队列的长度。
+
+	vm.max_map_count
+限制一个进程可以拥有的VMA(虚拟内存区域)的数量。虚拟内存区域是一个连续的虚拟地址空间区域。当 VMA 的数量超过这个值，OOM…
+
+	fs.file-max
+设置 Linux 内核分配的文件句柄的最大数量。
+
+	user    soft     nofile             65535
+	user    hard     nofile             65535
+设置具体用户可用的文件描述符数量。
+
+	user    soft     memlock          unlimited
+	user    hard     memlock          unlimited
+锁定内存，拒绝 swapping
+
+
+	session required pam_limits.so
+这是告诉Linux在用户完成系统登录后，应该调用pam_limits.so模块来设置系统对该用户可使用的各种资源数量的最大限制(包括用户可打开的最大文件数限制)，而pam_limits.so模块就会从/etc/security/limits.conf文件中读取配置来设置这些限制值。修改完后保存此文件
+
+
+
+index.cache.field.max_size: 50000
+index.cache.field.expire: 10m
+index.cache.field.type: soft
+# out of memory错误避免过于频繁的查询时集群假死
+# 1.设置es的缓存类型为Soft Reference,它的主要特点是据有较强的引用功能.只有当内存不够的时候,才进行回收这类内存,因此在内存足够的时候,它们通常不被回收.另外,这些引用对象还能保证在Java抛出OutOfMemory异常之前,被设置为null.它可以用于实现一些常用图片的缓存,实现Cache的功能,保证最大限度的使用内存而不引起OutOfMemory.在es的配置文件加上index.cache.field.type: soft即可.
+# 2.设置es最大缓存数据条数和缓存失效时间,通过设置index.cache.field.max_size: 50000来把缓存field的最大值设置为50000,设置index.cache.field.expire: 10m把过期时间设置成10分钟.
+
+indices.fielddata.cache.size:  20%
+indices.breaker.fielddata.limit: 75%
+#1.数据缓存的最大值，可以是一个节点的堆内存大小的比例，例如30%，也可以是一个绝对数字，比如12GB。默认是无限制，可以最大的利用内存。这个配置是静态的配置，必须在集群中的每个数据节点上启动前配置好。可以通过http://localhost:9200/_nodes/stats请求来监控节点的使用情况。
+#2.当系统发现fielddata的数量达到一定数量时会触发内存回收.默认值是JVM heap的70%
+
+
+bootstrap.mlockall: true
+#运行JVM锁住内存，不让JVM写入swapping，避免降低ES的性能。
+
+
+indices.fielddata.cache.size: 40%
+indices.cache.filter.size: 30%
+indices.cache.filter.terms.size: 1024mb
+#设置各部分所占用的缓存比例，默认是没有限制的，很可能会撑爆 JVM 堆空间(设置 fielddata 会影响搜索性能)。
+
+
+threadpool.search.type: cached
+threadpool.search.size: 100
+threadpool.search.queue_size: 2000
+#线程池的设置， size 默认是 处理器核数的 5 倍。
+
+
+transport.tcp.compress: true
+#设置所有节点间的传输数据是经过压缩的。默认不压缩。
+
+ES_HEAP_SIZE
+#默认 1G，做好不要超过 32 G。
+
+
+
+OS 实例参数配置：
+
+打开 sysctl.conf
+
+vim /etc/sysctl.conf
+
+vm.swappiness=1                          # 关闭 swapping
+net.core.somaxconn=65535                 # 上调端口的最大连接数
+vm.max_map_count=262144                  #(default) http://www.redhat.com/magazine/001nov04/features/vm
+fs.file-max=518144                       # http://www.tldp.org/LDP/solrhe/Securing-Optimizing-Linux-RH-Edition-v1.3/chap6sec72.html
+
+如果不想重启，可以通过sysctl -p动态加载/etc/sysctl.conf文件，但建议这样做之前先清空swap。
+然后，打开 limits.conf
+
+vim /etc/security/limits.conf
+
+
+注意，下面这些配置要保证 elastic search 要能够访问到，所以强烈建议为 es 新创建一个用户，比如 elasticsearch
+
+elasticsearch    soft    nofile          65535
+elasticsearch    hard    nofile          65535
+elasticsearch    soft    memlock         unlimited
+elasticsearch    hard    memlock         unlimited
+
+为了使以上参数永久生效，还要设置两个地方
+
+vim /etc/pam.d/common-session-noninteractive
+vim /etc/pam.d/common-session
+
+添加如下属性
+
+session required pam_limits.so
+
+可能需要重启机器！
+
+ES
+
+打开 elasticsearch 的配置文件 elasticsearch.yml，添加如下属性
+
+bootstrap.mlockall: true
+
+transport.tcp.compress: true
+
+indices.fielddata.cache.size: 20%
+indices.breaker.fielddata.limit: 75%
+indices.cache.filter.size: 30%
+indices.cache.filter.terms.size: 1024mb
+
+#线程池的设置，size 默认是处理器核数的5倍
+threadpool.search.type: fixed
+threadpool.search.size: 100
+threadpool.search.queue_size: 2000
+
+# 设置所有节点间的传输数据是经过压缩的。默认不压缩。
+transport.tcp.compress: true
+
+
+设置环境变量，最好在 ~/.bashrc，或者是 /etc/profile 下设置：
+
+# 不要超过 32 G
+export ES_HEAP_SIZE=4g
+
+设置完后，source 一下。重启机器。
+
+重启完成后，查看 es 的信息：
+
+curl 'http://localhost:9200/?pretty'
+
+优化完成。
